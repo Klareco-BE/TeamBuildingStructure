@@ -1,6 +1,6 @@
 # Klareco Team Building — Dashboard
 
-A small standalone app that replaces the Excel structure: plan the monthly
+A small standalone app that structures the TB organisation: plan the monthly
 event, email invites, collect ratings, and see past scores — all in one
 place.
 
@@ -62,34 +62,6 @@ always-on. Cheapest/easiest options, roughly in order of effort:
 Once it's hosted somewhere with a stable URL, set `APP_BASE_URL` in `.env`
 to that URL so the survey links in emails point to the right place.
 
-## Why Streamlit (and what else was considered)
-
-You mentioned Streamlit — it's a solid fit here and is what this first
-version uses:
-
-- **Streamlit (this build).** Plain Python, one file per screen, no
-  frontend code to maintain. Best if you (or anyone at Klareco who knows a
-  little Python) want to keep tweaking it yourselves. Downside: needs
-  hosting somewhere for the team to reach it (see above), and email
-  requires your own SMTP credentials.
-- **Google Forms + Sheets + Apps Script.** Zero hosting — everything lives
-  in Google's infrastructure. Apps Script can send the invite/survey emails
-  directly from your Gmail and write responses straight into a Sheet. Very
-  low maintenance, but the "dashboard" feel is weaker (it's really a sheet
-  plus a couple of scripts), and customizing the UI takes more
-  Apps-Script-specific know-how than editing Python.
-- **Airtable (or Notion) + built-in automations.** Nicer-looking interface
-  out of the box, built-in forms, and automations can send emails without
-  writing code. Costs more once you're on features like automations at
-  scale, and you're more limited by what the platform allows.
-- **Retool / Glide.** No-code internal-tool builders, good for more complex
-  dashboards with many data sources. Overkill for six people and one
-  monthly event, and both are paid products.
-
-For a 6-person team with this specific set of features, Streamlit keeps you
-in full control and costs nothing to run, at the cost of needing a few
-minutes of hosting/email setup up front. Happy to switch approaches if you'd
-rather trade that setup for a no-code option.
 
 ## File map
 
