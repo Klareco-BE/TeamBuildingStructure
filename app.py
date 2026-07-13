@@ -253,6 +253,21 @@ def render_plan_event():
             st.success(f"Event #{new_id} created. Head to **Send Invites** when you're ready.")
         st.rerun()
 
+    if event:
+        st.divider()
+        with st.expander("🗑️ Delete this event"):
+            st.warning(
+                f"This permanently deletes event #{event['id']} "
+                f"({event['activity'] or 'no activity set'}, {event['planned_date']}) along with any "
+                f"ratings already submitted for it. This can't be undone."
+            )
+            confirm = st.checkbox("Yes, I'm sure — delete it", key=f"confirm_delete_{event['id']}")
+            if st.button("Delete event", type="primary", disabled=not confirm,
+                         key=f"delete_btn_{event['id']}", use_container_width=True):
+                db.delete_event(event["id"])
+                st.success("Event deleted.")
+                st.rerun()
+
 
 # ============================================================================
 # Organizer Rotation

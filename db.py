@@ -229,6 +229,13 @@ def list_events(order="desc"):
         return [dict(r) for r in rows]
 
 
+def delete_event(event_id):
+    """Delete an event and any ratings submitted for it (foreign_keys is on
+    in get_conn(), and responses.event_id cascades on delete)."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+
+
 def mark_invites_sent(event_id):
     update_event(event_id, invites_sent_at=datetime.datetime.now().isoformat(timespec="seconds"),
                   status="Confirmed")
