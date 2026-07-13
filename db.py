@@ -1,17 +1,29 @@
 """
 db.py — all data access for the Team Building app.
 
-Storage: a single SQLite file (team_building.db) sitting next to this script.
-No external database needed — this keeps the whole app copy-pasteable and
-easy to back up (it's just one extra file).
+Storage: a Postgres database, meant to be a free Supabase project. This
+replaces the old SQLite file so data survives app restarts and redeploys —
+Supabase's storage is a real persistent database, not tied to this app's
+own container.
+
+Set SUPABASE_DB_URL (in .env locally, or as a Streamlit Cloud Secret) to
+the "Connection string" from your Supabase project's Database settings —
+use the "Transaction pooler" one (port 6543), which is the one meant for
+apps like this that open short-lived connections. See README.md for the
+full setup walkthrough.
 """
-import sqlite3
+import os
 import datetime
 import calendar
-from pathlib import Path
 from contextlib import contextmanager
 
-DB_PATH = Path(__file__).parent / "team_building.db"
+import psycopg2
+import psycopg2.extras
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("SUPABASE_DB_URL")
 
 DEFAULT_TEAM = [
     ("Bruno", "bruno.fantoli@klareco.be"),
@@ -31,13 +43,40 @@ CATEGORY_LABELS = {
 }
 
 
+class _CursorWrapper:
+    """Makes a psycopg2 cursor behave like the sqlite3 connection.execute(...)
+    calls this file used to make against the old SQLite file, so every query
+    below reads the same way it always did."""
+
+    def __init__(self, cur):
+        self._cur = cur
+
+    def execute(self, query, params=()):
+        self._cur.execute(query, params)
+        return self
+
+    def executemany(self, query, seq):
+        self._cur.executemany(query, seq)
+        return self
+
+    def fetchone(self):
+        return self._cur.fetchone()
+
+    def fetchall(self):
+        return self._cur.fetchall()
+
+
 @contextmanager
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "SUPABASE_DB_URL isn't set. Add it to your .env file locally, or as a "
+            "Streamlit Cloud Secret when deployed — see README.md for where to find "
+            "this connection string in your Supabase project."
+        )
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
     try:
-        yield conn
+        yield _CursorWrapper(conn.cursor())
         conn.commit()
     finally:
         conn.close()
@@ -53,7 +92,7 @@ def init_db():
         """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 month TEXT NOT NULL,
                 planned_date TEXT NOT NULL,
                 start_time TEXT,
@@ -69,9 +108,7 @@ def init_db():
                 created_at TEXT
             )
         """)
-        existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(events)").fetchall()}
-        if "duration_hours" not in existing_cols:
-            conn.execute("ALTER TABLE events ADD COLUMN duration_hours REAL")
+        conn.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS duration_hours REAL")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS organizer_queue (
                 position INTEGER PRIMARY KEY,
@@ -80,7 +117,7 @@ def init_db():
         """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS responses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
                 respondent TEXT NOT NULL,
                 creativity INTEGER,
@@ -94,21 +131,21 @@ def init_db():
         existing = conn.execute("SELECT COUNT(*) AS c FROM team_members").fetchone()["c"]
         if existing == 0:
             conn.executemany(
-                "INSERT INTO team_members (name, email) VALUES (?, ?)", DEFAULT_TEAM
+                "INSERT INTO team_members (name, email) VALUES (%s, %s)", DEFAULT_TEAM
             )
 
 
 # ---------------------------------------------------------------- team members
 def list_team_members():
     with get_conn() as conn:
-        rows = conn.execute("SELECT name, email FROM team_members ORDER BY rowid").fetchall()
+        rows = conn.execute("SELECT name, email FROM team_members ORDER BY name").fetchall()
         return [dict(r) for r in rows]
 
 
 def upsert_team_member(name, email):
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO team_members (name, email) VALUES (?, ?) "
+            "INSERT INTO team_members (name, email) VALUES (%s, %s) "
             "ON CONFLICT(name) DO UPDATE SET email=excluded.email",
             (name.strip(), email.strip()),
         )
@@ -116,7 +153,7 @@ def upsert_team_member(name, email):
 
 def delete_team_member(name):
     with get_conn() as conn:
-        conn.execute("DELETE FROM team_members WHERE name = ?", (name,))
+        conn.execute("DELETE FROM team_members WHERE name = %s", (name,))
 
 
 # ---------------------------------------------------------------- rotation helpers
@@ -145,16 +182,14 @@ def get_rotation_queue():
     back, removed members drop out of the queue."""
     team = [t["name"] for t in list_team_members()]
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT name FROM organizer_queue ORDER BY position"
-        ).fetchall()
+        rows = conn.execute("SELECT name FROM organizer_queue ORDER BY position").fetchall()
         queue = [r["name"] for r in rows]
 
         synced = [n for n in queue if n in team] + [n for n in team if n not in queue]
         if synced != queue:
             conn.execute("DELETE FROM organizer_queue")
             conn.executemany(
-                "INSERT INTO organizer_queue (position, name) VALUES (?, ?)",
+                "INSERT INTO organizer_queue (position, name) VALUES (%s, %s)",
                 list(enumerate(synced)),
             )
         return synced
@@ -164,7 +199,7 @@ def set_rotation_queue(names):
     with get_conn() as conn:
         conn.execute("DELETE FROM organizer_queue")
         conn.executemany(
-            "INSERT INTO organizer_queue (position, name) VALUES (?, ?)",
+            "INSERT INTO organizer_queue (position, name) VALUES (%s, %s)",
             list(enumerate(names)),
         )
 
@@ -193,16 +228,17 @@ def get_next_organizer():
 def create_event(month, planned_date, start_time, organizer, activity, location,
                   cost_per_person, participants, duration_hours=None):
     with get_conn() as conn:
-        cur = conn.execute(
+        row = conn.execute(
             """INSERT INTO events
                (month, planned_date, start_time, duration_hours, organizer, activity, location,
                 cost_per_person, status, participants, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Planned', ?, ?)""",
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'Planned', %s, %s)
+               RETURNING id""",
             (month, planned_date, start_time, duration_hours, organizer, activity, location,
              cost_per_person, ",".join(participants),
              datetime.datetime.now().isoformat(timespec="seconds")),
-        )
-        return cur.lastrowid
+        ).fetchone()
+        return row["id"]
 
 
 def update_event(event_id, **fields):
@@ -210,14 +246,14 @@ def update_event(event_id, **fields):
         return
     if "participants" in fields and isinstance(fields["participants"], list):
         fields["participants"] = ",".join(fields["participants"])
-    cols = ", ".join(f"{k} = ?" for k in fields)
+    cols = ", ".join(f"{k} = %s" for k in fields)
     with get_conn() as conn:
-        conn.execute(f"UPDATE events SET {cols} WHERE id = ?", (*fields.values(), event_id))
+        conn.execute(f"UPDATE events SET {cols} WHERE id = %s", (*fields.values(), event_id))
 
 
 def get_event(event_id):
     with get_conn() as conn:
-        row = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+        row = conn.execute("SELECT * FROM events WHERE id = %s", (event_id,)).fetchone()
         return dict(row) if row else None
 
 
@@ -230,17 +266,17 @@ def list_events(order="desc"):
 
 
 def delete_event(event_id):
-    """Delete an event and any ratings submitted for it (foreign_keys is on
-    in get_conn(), and responses.event_id cascades on delete)."""
+    """Delete an event and any ratings submitted for it (responses.event_id
+    cascades on delete, declared in the table itself — no extra step needed)."""
     with get_conn() as conn:
-        conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+        conn.execute("DELETE FROM events WHERE id = %s", (event_id,))
 
 
 def month_has_event(month_value):
     """True if an event already exists for the given 'YYYY-MM' month —
     used to flag a month that's at risk of slipping by unplanned."""
     with get_conn() as conn:
-        row = conn.execute("SELECT 1 FROM events WHERE month = ? LIMIT 1", (month_value,)).fetchone()
+        row = conn.execute("SELECT 1 FROM events WHERE month = %s LIMIT 1", (month_value,)).fetchone()
         return row is not None
 
 
@@ -260,7 +296,7 @@ def record_response(event_id, respondent, scores: dict):
         conn.execute(
             """INSERT INTO responses (event_id, respondent, creativity, team_spirit, fun,
                                        execution, submitted_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT(event_id, respondent) DO UPDATE SET
                  creativity=excluded.creativity, team_spirit=excluded.team_spirit,
                  fun=excluded.fun, execution=excluded.execution,
@@ -274,7 +310,7 @@ def record_response(event_id, respondent, scores: dict):
 def get_responses(event_id):
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM responses WHERE event_id = ? ORDER BY submitted_at", (event_id,)
+            "SELECT * FROM responses WHERE event_id = %s ORDER BY submitted_at", (event_id,)
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -316,3 +352,21 @@ def get_leaderboard(year=None):
     for i, row in enumerate(board, start=1):
         row["rank"] = i
     return board
+
+
+# ---------------------------------------------------------------- backup / export
+def export_all_data():
+    """Everything in the database, as plain dicts/lists — used for the
+    on-demand JSON backup download (Supabase itself also keeps its own
+    backups, this is just an extra copy in your own hands)."""
+    with get_conn() as conn:
+        team = conn.execute("SELECT name, email FROM team_members ORDER BY name").fetchall()
+        events = conn.execute("SELECT * FROM events ORDER BY id").fetchall()
+        responses = conn.execute("SELECT * FROM responses ORDER BY id").fetchall()
+        queue = conn.execute("SELECT position, name FROM organizer_queue ORDER BY position").fetchall()
+    return {
+        "team_members": [dict(r) for r in team],
+        "events": [dict(r) for r in events],
+        "responses": [dict(r) for r in responses],
+        "organizer_queue": [dict(r) for r in queue],
+    }

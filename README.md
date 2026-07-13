@@ -21,8 +21,9 @@ place.
    year-end leaderboard (same categories as the Excel version: Creativity,
    Building Team Spirit, Fun, Execution).
 
-Data is stored in `team_building.db`, a single SQLite file created
-automatically next to the app — nothing else to install or manage.
+Data is stored in Supabase (a free hosted Postgres database) — see
+**Setting up storage (Supabase)** below. This means the data survives app
+restarts and redeploys, unlike the old setup where it lived in a local file.
 
 ## Making sure a month doesn't slip by unplanned
 
@@ -35,6 +36,37 @@ Two safeguards work together here:
   event, and messages Bruno directly — either a quick "all good" or a nudge
   naming whoever's up next in the rotation. This means the check happens
   even if nobody opens the app that day.
+
+## Setting up storage (Supabase)
+
+The app needs a Supabase database to store its data. One-time setup:
+
+1. Go to [supabase.com](https://supabase.com), sign in with your GitHub
+   account (since you've already linked it), and create a new project.
+   Pick any name and a strong database password — save that password
+   somewhere, you'll need it in step 3.
+2. Once the project is ready, click the **"Connect"** button near the top
+   of the project dashboard (not inside Project Settings — it's its own
+   button). A panel opens with a few connection options; choose
+   **"Transaction pooler"** (this matters — use this one, not "Direct
+   connection"). Copy the connection string shown there.
+3. Open (or create) a `.env` file in this folder — copy `.env.example` to
+   `.env` if you haven't yet — and paste that connection string into
+   `SUPABASE_DB_URL`, replacing `[YOUR-PASSWORD]` in it with the real
+   database password from step 1.
+4. If you already had data in the old `team_building.db` file and want to
+   keep it, run this once:
+   ```bash
+   python migrate_sqlite_to_supabase.py
+   ```
+   This copies your team roster, past events, and ratings into Supabase.
+   It only reads the old file, so it's safe to run.
+5. When you deploy to Streamlit Community Cloud (see below), add the same
+   `SUPABASE_DB_URL` value in that app's **Settings → Secrets**, so the
+   deployed app talks to the same database.
+
+That's it — Supabase now holds all the data permanently, independent of
+whether or when the app itself restarts.
 
 ## Running it locally
 
@@ -87,23 +119,20 @@ GitHub, so **Streamlit Community Cloud** (free) is the natural next step:
    ```
    APP_BASE_URL = "https://your-app-name.streamlit.app"
    ```
-   (Use the actual address from step 3.) If you're also using the optional
-   automatic-sending feature, add `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
-   `SMTP_PASSWORD`, `FROM_EMAIL`, `FROM_NAME` here too — same names as in
-   `.env`, just entered in this Secrets box instead of a file. The app
-   reads either one, so nothing else needs to change.
+   (Use the actual address from step 3.) Also add `SUPABASE_DB_URL` here —
+   same value as in your `.env` file, so the deployed app talks to the same
+   database. If you're also using the optional automatic-sending feature,
+   add `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `FROM_EMAIL`,
+   `FROM_NAME` here too — same names as in `.env`, just entered in this
+   Secrets box instead of a file. The app reads either one, so nothing else
+   needs to change.
 5. Save — the app restarts itself with the new address, and survey links
    in emails will now be real, clickable links.
 
-One thing worth knowing: a free Streamlit Cloud app's storage isn't
-guaranteed to stick around forever — if the app restarts (which can happen
-on its own after a while, or whenever you push a code update), it starts
-fresh from what's in the GitHub repo, not necessarily what was typed in
-during the last session. For a 6-person tool this is a minor inconvenience
-rather than a disaster, but to be safe: there's a **"Download a backup of
-the database"** button on the Team Settings page — get in the habit of
-clicking it every so often (e.g. after each month's ratings come in) so
-you always have your event history saved on your own computer too.
+Because data lives in Supabase rather than on the app's own disk, restarts
+and redeploys no longer risk losing anything — but it's still a good habit
+to click the **"Download a backup (JSON)"** button on the Team Settings
+page every so often, as an extra copy in your own hands.
 
 - **Render / Railway / Fly.io** (free-to-cheap tiers) are alternatives to
   Streamlit Cloud with the same trade-off, slightly more setup but more
@@ -116,8 +145,13 @@ you always have your event history saved on your own computer too.
 ## File map
 
 - `app.py` — the whole UI, one function per screen.
-- `db.py` — SQLite schema and all data access (events, team, responses).
+- `db.py` — Postgres/Supabase schema and all data access (events, team,
+  responses).
 - `emailer.py` — used only by the optional automatic-sending feature; falls
   back to an on-screen preview if `.env`/Secrets aren't configured.
-- `team_building.db` — created automatically on first run. Back it up from
-  the Team Settings page once the app is deployed somewhere.
+- `migrate_sqlite_to_supabase.py` — one-time script to bring data from the
+  old `team_building.db` file into Supabase. Only needed once, when
+  switching over.
+- `team_building.db` — the old local database file, if you had one from
+  before. No longer used by the app once `SUPABASE_DB_URL` is set; keep it
+  around only as a one-time source for the migration script above.

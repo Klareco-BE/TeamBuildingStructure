@@ -2,7 +2,8 @@
 Klareco Team Building — standalone dashboard.
 
 Run locally:      streamlit run app.py
-Data lives in:     team_building.db (SQLite, created automatically)
+Data lives in:     Supabase (Postgres) — set SUPABASE_DB_URL in .env,
+                    see README.md's "Setting up storage" section.
 Email:             by default, "send" buttons open the message in your own
                     email app (Outlook, Gmail, etc.) so you just hit Send
                     yourself — nothing to configure. If you'd rather have
@@ -12,6 +13,7 @@ Email:             by default, "send" buttons open the message in your own
                     README.md).
 """
 import datetime
+import json
 import os
 import urllib.parse
 
@@ -556,12 +558,13 @@ def render_team_settings():
     st.divider()
     st.subheader("Backup")
     st.caption(
-        "If this app is deployed online, its storage isn't guaranteed to survive every restart. "
-        "Download a backup now and then so you never lose events or ratings."
+        "Data now lives in Supabase, which keeps its own backups — this is just an extra copy in "
+        "your own hands if you ever want one."
     )
-    with open(db.DB_PATH, "rb") as f:
-        st.download_button("⬇️ Download a backup of the database", f, file_name="team_building_backup.db",
-                            use_container_width=True)
+    backup_json = json.dumps(db.export_all_data(), indent=2, default=str)
+    st.download_button("⬇️ Download a backup (JSON)", backup_json,
+                        file_name=f"team_building_backup_{datetime.date.today().isoformat()}.json",
+                        mime="application/json", use_container_width=True)
 
 
 # ============================================================================
