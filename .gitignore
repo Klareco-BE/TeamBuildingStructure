@@ -1,0 +1,13 @@
+# Secrets — never commit these
+.env
+
+# Local database — each environment gets its own
+team_building.db
+team_building.db-journal
+
+# Python
+__pycache__/
+*.pyc
+
+# Streamlit
+.streamlit/secrets.toml
