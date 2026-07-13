@@ -3,9 +3,13 @@ Klareco Team Building — standalone dashboard.
 
 Run locally:      streamlit run app.py
 Data lives in:     team_building.db (SQLite, created automatically)
-Email setup:       copy .env.example to .env and fill in your SMTP details
-                    (see README.md). Until then, "send" buttons show a
-                    preview of the email instead of actually sending it.
+Email:             by default, "send" buttons open the message in your own
+                    email app (Outlook, Gmail, etc.) so you just hit Send
+                    yourself — nothing to configure. If you'd rather have
+                    the app send automatically without you clicking Send in
+                    your own mailbox, there's an optional "Advanced" section
+                    on each send screen for that (needs SMTP setup, see
+                    README.md).
 """
 import datetime
 import urllib.parse
@@ -37,9 +41,22 @@ def base_url():
     return os.getenv("APP_BASE_URL", "http://localhost:8501")
 
 
-def respond_link(event_id, person):
-    params = urllib.parse.urlencode({"respond": "1", "event": event_id, "person": person})
-    return f"{base_url()}/?{params}"
+def respond_link(event_id, person=None):
+    """A link to the rating form. If person is given, the form pre-fills who's
+    answering; if not, whoever opens it just types their own name."""
+    params = {"respond": "1", "event": event_id}
+    if person:
+        params["person"] = person
+    return f"{base_url()}/?{urllib.parse.urlencode(params)}"
+
+
+def mailto_url(to_emails, subject, body):
+    """Build a mailto: link that opens the user's own email app with the
+    recipients, subject, and message already filled in — no email account
+    or password needs to be given to this app at all."""
+    to_part = ",".join(e for e in to_emails if e)
+    query = f"subject={urllib.parse.quote(subject)}&body={urllib.parse.quote(body)}"
+    return f"mailto:{to_part}?{query}"
 
 
 def status_badge(status):
@@ -78,7 +95,11 @@ def render_survey_response():
 
     st.title("🏅 Rate this Team Building")
     st.subheader(f"{event['activity']} — {event['planned_date']}")
-    st.caption(f"Organized by {event['organizer']}. Answering as **{person or 'you'}**.")
+    st.caption(f"Organized by {event['organizer']}.")
+    if not person:
+        person = st.text_input("Your name (so your rating gets counted)")
+    else:
+        st.caption(f"Answering as **{person}**.")
     st.write("Score each question from 1 (not at all) to 5 (completely).")
 
     with st.form("survey_form"):
@@ -88,12 +109,10 @@ def render_survey_response():
         submitted = st.form_submit_button("Submit my rating", use_container_width=True)
 
     if submitted:
-        respondent = person or st.session_state.get("fallback_name", "")
-        if not respondent:
-            st.warning("We couldn't tell who you are from the link — enter your name below and resubmit.")
-            respondent = st.text_input("Your name")
-        if respondent:
-            db.record_response(event_id, respondent, scores)
+        if not person:
+            st.warning("Enter your name above so your rating gets counted, then submit again.")
+        else:
+            db.record_response(event_id, person, scores)
             st.success("Thanks! Your rating has been recorded.")
             st.balloons()
 
@@ -282,10 +301,11 @@ def render_send_invites():
     emails = team_email_map()
 
     participants = [p for p in (event["participants"] or "").split(",") if p]
+    to_list = [emails.get(p) for p in participants if emails.get(p)]
     st.write(f"**Recipients:** {', '.join(participants) or '(none selected — edit the event to add participants)'}")
 
     duration = format_duration(event["duration_hours"])
-    subject = f"Team Building — {event['activity'] or 'this month'} ({event['planned_date']})"
+    subject = f"Team Building - {event['activity'] or 'this month'} ({event['planned_date']})"
     body_text = (
         f"Hi team,\n\n"
         f"Here's the plan for this month's team building:\n\n"
@@ -296,19 +316,31 @@ def render_send_invites():
         f"Organizer: {event['organizer']}\n\n"
         f"See you there!\n{event['organizer']}"
     )
-    body_html = "<br>".join(body_text.split("\n"))
 
-    st.text_area("Email preview", body_text, height=220)
+    st.text_area("Email preview — feel free to tweak the wording before sending", body_text, height=220,
+                 key=f"invite_preview_{event['id']}")
 
-    if st.button("Send invites now", type="primary", use_container_width=True):
-        to_list = [emails.get(p) for p in participants if emails.get(p)]
-        sent, detail = emailer.send_email(to_list, subject, body_html, body_text)
-        if sent:
-            db.mark_invites_sent(event["id"])
-            st.success(detail)
-        else:
-            st.warning("Not sent as a real email yet — showing what would be sent:")
-            st.code(detail)
+    st.link_button("📧 Open this email in my email app", mailto_url(to_list, subject, body_text),
+                    type="primary", use_container_width=True, disabled=not to_list)
+    st.caption("Opens your normal email program (Outlook, Gmail, etc.) with everything filled in — "
+               "just check it and hit Send there.")
+
+    if st.button("✅ I've sent it", use_container_width=True):
+        db.mark_invites_sent(event["id"])
+        st.success("Marked as sent.")
+        st.rerun()
+
+    with st.expander("Advanced: have the app send it automatically instead"):
+        st.caption("Only needed if you don't want to click Send yourself — requires email setup, see README.md.")
+        body_html = "<br>".join(body_text.split("\n"))
+        if st.button("Send invites automatically", use_container_width=True):
+            sent, detail = emailer.send_email(to_list, subject, body_html, body_text)
+            if sent:
+                db.mark_invites_sent(event["id"])
+                st.success(detail)
+            else:
+                st.warning("Not sent — email isn't configured. Here's what would have been sent:")
+                st.code(detail)
 
 
 # ============================================================================
@@ -327,6 +359,7 @@ def render_send_survey():
     event = events[idx]
     emails = team_email_map()
     participants = [p for p in (event["participants"] or "").split(",") if p]
+    to_list = [emails.get(p) for p in participants if emails.get(p)]
 
     responses = db.get_responses(event["id"])
     responded = {r["respondent"] for r in responses}
@@ -336,34 +369,55 @@ def render_send_survey():
         st.caption("Responded: " + (", ".join(sorted(responded)) or "—") +
                    "  |  Still waiting on: " + (", ".join(sorted(set(participants) - responded)) or "—"))
 
-    st.markdown("Each participant gets their own personal link so their answer is tracked correctly.")
+    link = respond_link(event["id"])
+    subject = f"Quick rating: {event['activity'] or 'last team building'}"
+    body_text = (
+        f"Hi team,\n\n"
+        f"Thanks for joining the team building on {event['planned_date']}! "
+        f"Got 30 seconds to rate it? Just type your name when you open the form.\n\n"
+        f"{link}\n\nThanks!\n{event['organizer']}"
+    )
 
-    if st.button("Send rating survey now", type="primary", use_container_width=True):
-        results = []
-        for p in participants:
-            link = respond_link(event["id"], p)
-            subject = f"Quick rating: {event['activity'] or 'last team building'}"
-            body_text = (
-                f"Hi {p},\n\n"
-                f"Thanks for joining the team building on {event['planned_date']}! "
-                f"Got 30 seconds to rate it?\n\n{link}\n\nThanks!\n{event['organizer']}"
-            )
-            body_html = "<br>".join(body_text.split("\n")) + f'<br><br><a href="{link}">Rate it here</a>'
-            sent, detail = emailer.send_email([emails.get(p)], subject, body_html, body_text)
-            results.append((p, sent, detail))
+    st.text_area("Email preview — feel free to tweak the wording before sending", body_text, height=200,
+                 key=f"survey_preview_{event['id']}")
 
-        any_sent = any(r[1] for r in results)
-        if any_sent:
-            db.mark_survey_sent(event["id"])
-        for p, sent, detail in results:
-            if sent:
-                st.success(f"{p}: sent.")
-            else:
-                st.warning(f"{p}: not sent as real email — preview below.")
-                st.code(detail)
+    st.link_button("📧 Open this email in my email app", mailto_url(to_list, subject, body_text),
+                    type="primary", use_container_width=True, disabled=not to_list)
+    st.caption("Everyone gets the same link and just types their own name in the form — "
+               "no need to send separate emails.")
+
+    if st.button("✅ I've sent it", use_container_width=True):
+        db.mark_survey_sent(event["id"])
+        st.success("Marked as sent.")
+        st.rerun()
+
+    with st.expander("Advanced: have the app send personalized links automatically instead"):
+        st.caption("Sends each participant their own pre-filled link — requires email setup, see README.md.")
+        if st.button("Send personalized rating survey automatically", use_container_width=True):
+            results = []
+            for p in participants:
+                personal_link = respond_link(event["id"], p)
+                body_text_p = (
+                    f"Hi {p},\n\n"
+                    f"Thanks for joining the team building on {event['planned_date']}! "
+                    f"Got 30 seconds to rate it?\n\n{personal_link}\n\nThanks!\n{event['organizer']}"
+                )
+                body_html_p = "<br>".join(body_text_p.split("\n")) + f'<br><br><a href="{personal_link}">Rate it here</a>'
+                sent, detail = emailer.send_email([emails.get(p)], subject, body_html_p, body_text_p)
+                results.append((p, sent, detail))
+
+            any_sent = any(r[1] for r in results)
+            if any_sent:
+                db.mark_survey_sent(event["id"])
+            for p, sent, detail in results:
+                if sent:
+                    st.success(f"{p}: sent.")
+                else:
+                    st.warning(f"{p}: not sent — email isn't configured.")
+                    st.code(detail)
 
     st.divider()
-    st.caption("Testing without email set up? Fill in a response yourself here:")
+    st.caption("Testing the scoring? Fill in a response yourself here:")
     with st.expander("Fill in a test response"):
         test_person = st.selectbox("As", participants or ["(no participants)"], key="test_person")
         cols = st.columns(4)
