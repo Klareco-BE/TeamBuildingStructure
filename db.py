@@ -19,6 +19,7 @@ from contextlib import contextmanager
 
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -66,20 +67,55 @@ class _CursorWrapper:
         return self._cur.fetchall()
 
 
+_pool = None
+
+
+def _get_pool():
+    """A small set of already-open connections to Supabase, reused across
+    every call instead of opening a brand new one each time. Opening a
+    connection means a fresh trip over the internet to Supabase's servers
+    (DNS + network handshake + login) — reusing a handful of already-open
+    ones instead is what keeps the app feeling snappy rather than pausing
+    on every click."""
+    global _pool
+    if _pool is None:
+        if not DATABASE_URL:
+            raise RuntimeError(
+                "SUPABASE_DB_URL isn't set. Add it to your .env file locally, or as a "
+                "Streamlit Cloud Secret when deployed — see README.md for where to find "
+                "this connection string in your Supabase project."
+            )
+        _pool = psycopg2.pool.ThreadedConnectionPool(
+            1, 5, dsn=DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor,
+        )
+    return _pool
+
+
 @contextmanager
 def get_conn():
-    if not DATABASE_URL:
-        raise RuntimeError(
-            "SUPABASE_DB_URL isn't set. Add it to your .env file locally, or as a "
-            "Streamlit Cloud Secret when deployed — see README.md for where to find "
-            "this connection string in your Supabase project."
-        )
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+    pool = _get_pool()
+    conn = pool.getconn()
+
+    # A connection borrowed from the pool might have gone stale while it
+    # sat idle (Supabase can close quiet connections after a while). A tiny
+    # "are you still there?" check is far cheaper than a fresh connection,
+    # so ping it first and swap in a new one only if it's actually dead.
+    try:
+        with conn.cursor() as probe:
+            probe.execute("SELECT 1")
+    except Exception:
+        conn.rollback()
+        pool.putconn(conn, close=True)
+        conn = pool.getconn()
+
     try:
         yield _CursorWrapper(conn.cursor())
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
-        conn.close()
+        pool.putconn(conn)
 
 
 def init_db():
