@@ -96,6 +96,19 @@ def format_duration(hours):
     return f"{hours:g} hours"
 
 
+def event_numbers():
+    """Map each event's real database id to a compact, gap-free display
+    number (1, 2, 3, ...) based on creation order. The database id itself
+    is never reused (that would risk mixing up old survey links or ratings),
+    but this on-screen number is recalculated fresh each time, so it never
+    skips after a delete — delete event #2 and the next new event becomes
+    #2 again, event #3 becomes #2, and so on. Computed from every event
+    (not just whatever subset a screen is showing), so the same event shows
+    the same number everywhere."""
+    ordered = sorted(db.list_events(), key=lambda e: e["id"])
+    return {e["id"]: i + 1 for i, e in enumerate(ordered)}
+
+
 # ============================================================================
 # Public "fill in the survey" view — reached via a direct link, no nav shown
 # ============================================================================
@@ -195,6 +208,7 @@ def render_plan_event():
 
     events = db.list_events()
     team = [t["name"] for t in db.list_team_members()]
+    numbers = event_numbers()
 
     mode = st.radio("What do you want to do?", ["Create a new event", "Edit an existing event"],
                      horizontal=True)
@@ -203,7 +217,8 @@ def render_plan_event():
         if not events:
             st.info("No events yet — create one first.")
             return
-        labels = [f"#{e['id']} · {e['planned_date']} · {e['activity'] or '(no activity yet)'}" for e in events]
+        labels = [f"#{numbers[e['id']]} · {e['planned_date']} · {e['activity'] or '(no activity yet)'}"
+                  for e in events]
         idx = st.selectbox("Choose an event", range(len(events)), format_func=lambda i: labels[i])
         event = events[idx]
     else:
@@ -264,14 +279,15 @@ def render_plan_event():
             new_id = db.create_event(month_value, planned_date.isoformat(), start_time, organizer,
                                       activity, location, cost, participants,
                                       duration_hours=duration_hours)
-            st.success(f"Event #{new_id} created. Head to **Send Invites** when you're ready.")
+            new_number = event_numbers()[new_id]
+            st.success(f"Event #{new_number} created. Head to **Send Invites** when you're ready.")
         st.rerun()
 
     if event:
         st.divider()
         with st.expander("🗑️ Delete this event"):
             st.warning(
-                f"This permanently deletes event #{event['id']} "
+                f"This permanently deletes event #{numbers[event['id']]} "
                 f"({event['activity'] or 'no activity set'}, {event['planned_date']}) along with any "
                 f"ratings already submitted for it. This can't be undone."
             )
@@ -343,7 +359,9 @@ def render_send_invites():
         st.info("No upcoming events. Plan one first.")
         return
 
-    labels = [f"#{e['id']} · {e['planned_date']} · {e['activity'] or '(no activity yet)'}" for e in events]
+    numbers = event_numbers()
+    labels = [f"#{numbers[e['id']]} · {e['planned_date']} · {e['activity'] or '(no activity yet)'}"
+              for e in events]
     idx = st.selectbox("Choose an event", range(len(events)), format_func=lambda i: labels[i])
     event = events[idx]
     emails = team_email_map()
@@ -402,7 +420,9 @@ def render_send_survey():
         st.info("No events yet.")
         return
 
-    labels = [f"#{e['id']} · {e['planned_date']} · {e['activity'] or '(no activity yet)'}" for e in events]
+    numbers = event_numbers()
+    labels = [f"#{numbers[e['id']]} · {e['planned_date']} · {e['activity'] or '(no activity yet)'}"
+              for e in events]
     idx = st.selectbox("Choose an event", range(len(events)), format_func=lambda i: labels[i])
     event = events[idx]
     emails = team_email_map()
