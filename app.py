@@ -12,6 +12,7 @@ Email:             by default, "send" buttons open the message in your own
                     README.md).
 """
 import datetime
+import os
 import urllib.parse
 
 import streamlit as st
@@ -21,6 +22,17 @@ import emailer
 
 st.set_page_config(page_title="Klareco Team Building", page_icon="🎉", layout="wide")
 db.init_db()
+
+# If this app is deployed on Streamlit Community Cloud, values set in its
+# "Secrets" panel show up in st.secrets, not as environment variables. Copy
+# them across so the rest of the app (and emailer.py) can keep reading
+# plain environment variables either way, whether running locally with a
+# .env file or deployed with Secrets.
+try:
+    for _k, _v in st.secrets.items():
+        os.environ.setdefault(_k, str(_v))
+except Exception:
+    pass
 
 GROUND_RULES = """
 - **Frequency:** once a month.
@@ -37,8 +49,13 @@ GROUND_RULES = """
 # Helpers
 # ============================================================================
 def base_url():
-    import os
     return os.getenv("APP_BASE_URL", "http://localhost:8501")
+
+
+def links_are_local():
+    """True if survey links still point at localhost — meaning they'll only
+    work on this machine, not for other participants."""
+    return "localhost" in base_url() or "127.0.0.1" in base_url()
 
 
 def respond_link(event_id, person=None):
@@ -97,7 +114,9 @@ def render_survey_response():
     st.subheader(f"{event['activity']} — {event['planned_date']}")
     st.caption(f"Organized by {event['organizer']}.")
     if not person:
-        person = st.text_input("Your name (so your rating gets counted)")
+        participants = [p for p in (event["participants"] or "").split(",") if p]
+        person = st.selectbox("Your name (so your rating gets counted)", participants,
+                               index=None, placeholder="Choose your name...")
     else:
         st.caption(f"Answering as **{person}**.")
     st.write("Score each question from 1 (not at all) to 5 (completely).")
@@ -110,7 +129,7 @@ def render_survey_response():
 
     if submitted:
         if not person:
-            st.warning("Enter your name above so your rating gets counted, then submit again.")
+            st.warning("Choose your name above so your rating gets counted, then submit again.")
         else:
             db.record_response(event_id, person, scores)
             st.success("Thanks! Your rating has been recorded.")
@@ -369,12 +388,19 @@ def render_send_survey():
         st.caption("Responded: " + (", ".join(sorted(responded)) or "—") +
                    "  |  Still waiting on: " + (", ".join(sorted(set(participants) - responded)) or "—"))
 
+    if links_are_local():
+        st.warning(
+            "⚠️ The rating link currently points to **localhost**, which only works on this "
+            "computer — participants won't be able to open it. Deploy the app (see README.md) "
+            "and set `APP_BASE_URL` to its real address to fix this."
+        )
+
     link = respond_link(event["id"])
     subject = f"Quick rating: {event['activity'] or 'last team building'}"
     body_text = (
         f"Hi team,\n\n"
         f"Thanks for joining the team building on {event['planned_date']}! "
-        f"Got 30 seconds to rate it? Just type your name when you open the form.\n\n"
+        f"Got 30 seconds to rate it? Just pick your name from the list when you open the form.\n\n"
         f"{link}\n\nThanks!\n{event['organizer']}"
     )
 
@@ -383,7 +409,7 @@ def render_send_survey():
 
     st.link_button("📧 Open this email in my email app", mailto_url(to_list, subject, body_text),
                     type="primary", use_container_width=True, disabled=not to_list)
-    st.caption("Everyone gets the same link and just types their own name in the form — "
+    st.caption("Everyone gets the same link and just picks their own name from the list — "
                "no need to send separate emails.")
 
     if st.button("✅ I've sent it", use_container_width=True):
@@ -499,6 +525,16 @@ def render_team_settings():
     if add and new_name:
         db.upsert_team_member(new_name, new_email)
         st.rerun()
+
+    st.divider()
+    st.subheader("Backup")
+    st.caption(
+        "If this app is deployed online, its storage isn't guaranteed to survive every restart. "
+        "Download a backup now and then so you never lose events or ratings."
+    )
+    with open(db.DB_PATH, "rb") as f:
+        st.download_button("⬇️ Download a backup of the database", f, file_name="team_building_backup.db",
+                            use_container_width=True)
 
 
 # ============================================================================

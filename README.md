@@ -58,28 +58,54 @@ above works fine for you, which it will for most cases.
 
 ## Making it reachable by the team (not just your laptop)
 
-Right now the app only runs on whichever machine you start it on. For
-survey links to work when participants click them, the app needs to run
-somewhere always-on — not required for the invite emails themselves, which
-work regardless. Cheapest/easiest options, roughly in order of effort:
+Right now the app only runs on whichever machine you start it on, at an
+address (`localhost`) that only means something on that one machine. For
+survey links to actually open for participants, the app needs to live
+somewhere always-on with a real address. This repo is already connected to
+GitHub, so **Streamlit Community Cloud** (free) is the natural next step:
 
-- **Streamlit Community Cloud** (free) — push this folder to a private
-  GitHub repo, connect it at streamlit.io/cloud, add your `.env` values as
-  "secrets" in their dashboard (only needed if you're using the optional
-  automatic-sending feature above). Probably the path of least resistance.
-- **Render / Railway / Fly.io** (free-to-cheap tiers) — slightly more setup
-  than Streamlit Cloud, but more control if you outgrow it.
+1. Push this folder to GitHub if you haven't already (`git add`, `git
+   commit`, `git push` — the usual routine).
+2. Go to [share.streamlit.io](https://share.streamlit.io), sign in, and
+   click "New app". Point it at this repo and `app.py`.
+3. Deploy. You'll get a permanent address like
+   `https://your-app-name.streamlit.app`.
+4. In that same Streamlit Cloud dashboard, open your app's **Settings →
+   Secrets** and add:
+   ```
+   APP_BASE_URL = "https://your-app-name.streamlit.app"
+   ```
+   (Use the actual address from step 3.) If you're also using the optional
+   automatic-sending feature, add `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
+   `SMTP_PASSWORD`, `FROM_EMAIL`, `FROM_NAME` here too — same names as in
+   `.env`, just entered in this Secrets box instead of a file. The app
+   reads either one, so nothing else needs to change.
+5. Save — the app restarts itself with the new address, and survey links
+   in emails will now be real, clickable links.
+
+One thing worth knowing: a free Streamlit Cloud app's storage isn't
+guaranteed to stick around forever — if the app restarts (which can happen
+on its own after a while, or whenever you push a code update), it starts
+fresh from what's in the GitHub repo, not necessarily what was typed in
+during the last session. For a 6-person tool this is a minor inconvenience
+rather than a disaster, but to be safe: there's a **"Download a backup of
+the database"** button on the Team Settings page — get in the habit of
+clicking it every so often (e.g. after each month's ratings come in) so
+you always have your event history saved on your own computer too.
+
+- **Render / Railway / Fly.io** (free-to-cheap tiers) are alternatives to
+  Streamlit Cloud with the same trade-off, slightly more setup but more
+  control if you outgrow it.
 - **A small always-on machine you already have** (e.g. a NAS, an old
-  laptop, a company server) — run `streamlit run app.py` there and set
+  laptop, a company server) avoids the storage question entirely, since
+  the disk is really yours — run `streamlit run app.py` there and set
   `APP_BASE_URL` in `.env` to its address.
-
-Once it's hosted somewhere with a stable URL, set `APP_BASE_URL` in `.env`
-to that URL so the survey links in emails point to the right place.
 
 ## File map
 
 - `app.py` — the whole UI, one function per screen.
 - `db.py` — SQLite schema and all data access (events, team, responses).
 - `emailer.py` — used only by the optional automatic-sending feature; falls
-  back to an on-screen preview if `.env` isn't configured.
-- `team_building.db` — created automatically on first run.
+  back to an on-screen preview if `.env`/Secrets aren't configured.
+- `team_building.db` — created automatically on first run. Back it up from
+  the Team Settings page once the app is deployed somewhere.
