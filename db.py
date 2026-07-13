@@ -236,6 +236,14 @@ def delete_event(event_id):
         conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
 
 
+def month_has_event(month_value):
+    """True if an event already exists for the given 'YYYY-MM' month —
+    used to flag a month that's at risk of slipping by unplanned."""
+    with get_conn() as conn:
+        row = conn.execute("SELECT 1 FROM events WHERE month = ? LIMIT 1", (month_value,)).fetchone()
+        return row is not None
+
+
 def mark_invites_sent(event_id):
     update_event(event_id, invites_sent_at=datetime.datetime.now().isoformat(timespec="seconds"),
                   status="Confirmed")

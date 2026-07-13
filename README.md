@@ -24,6 +24,18 @@ place.
 Data is stored in `team_building.db`, a single SQLite file created
 automatically next to the app — nothing else to install or manage.
 
+## Making sure a month doesn't slip by unplanned
+
+Two safeguards work together here:
+
+- **In the app:** the Overview page shows a clear warning if the current
+  month has nothing planned yet, with how many days are left to fix that.
+- **Outside the app:** a Claude scheduled task ("team-building-monthly-check")
+  runs on the 25th of every month, checks the database for next month's
+  event, and messages Bruno directly — either a quick "all good" or a nudge
+  naming whoever's up next in the rotation. This means the check happens
+  even if nobody opens the app that day.
+
 ## Running it locally
 
 ```bash

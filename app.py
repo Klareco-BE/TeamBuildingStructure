@@ -143,6 +143,18 @@ def render_overview():
     st.title("🎉 Klareco Team Building")
     st.caption("Structure & principles, planning, and scores — all in one place.")
 
+    today = datetime.date.today()
+    current_month_value = f"{today.year}-{today.month:02d}"
+    if not db.month_has_event(current_month_value):
+        next_month_first = (datetime.date(today.year + 1, 1, 1) if today.month == 12
+                             else datetime.date(today.year, today.month + 1, 1))
+        days_left = (next_month_first - today).days
+        st.error(
+            f"⚠️ No team building planned for **{today.strftime('%B %Y')}** yet — "
+            f"{days_left} day{'s' if days_left != 1 else ''} left in the month. "
+            f"Head to **Plan / Edit Event** to lock one in."
+        )
+
     events = db.list_events()
     upcoming = [e for e in events if e["status"] != "Done"]
     upcoming.sort(key=lambda e: e["planned_date"])
