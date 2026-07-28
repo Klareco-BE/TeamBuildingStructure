@@ -18,6 +18,7 @@ import os
 import urllib.parse
 
 import streamlit as st
+from streamlit_sortables import sort_items
 
 import db
 import emailer
@@ -304,7 +305,7 @@ def render_plan_event():
 # ============================================================================
 def render_organizer_rotation():
     st.title("🔁 Organizer Rotation")
-    st.caption("Who's up next, and after that. Reassign a month and the rest of the queue shifts to fit.")
+    st.caption("Who's up next, and after that. Drag a name below to change the order.")
 
     team = [t["name"] for t in db.list_team_members()]
     if not team:
@@ -326,19 +327,25 @@ def render_organizer_rotation():
                 c3.markdown("🎯 **Next up**")
 
     st.divider()
-    st.subheader("Reassign a month")
-    st.caption("Pick the month someone wants to (re)organize, and who should take it. "
-               "Everyone in between slides over by one.")
+    st.subheader("Reorder the queue")
+    st.caption("Drag a name to a new spot — position 1 lines up with the soonest month above.")
 
-    with st.form("reassign_organizer"):
-        c1, c2 = st.columns(2)
-        month_idx = c1.selectbox("Month", range(len(slots)), format_func=lambda i: slots[i][0][0])
-        new_organizer = c2.selectbox("New organizer", team)
-        submitted = st.form_submit_button("Update rotation", use_container_width=True)
-
-    if submitted:
-        db.move_organizer_to_slot(new_organizer, month_idx)
-        st.success(f"{new_organizer} now organizes {slots[month_idx][0][0]}. The rest of the queue shifted.")
+    sortable_style = """
+    .sortable-component { background-color: transparent; }
+    .sortable-container { background-color: transparent; }
+    .sortable-item {
+        background-color: rgb(240, 242, 246);
+        color: rgb(49, 51, 63);
+        border: 1px solid rgba(49, 51, 63, 0.2);
+        border-radius: 0.5rem;
+        font-weight: 600;
+    }
+    """
+    reordered = sort_items(
+        queue, direction="vertical", custom_style=sortable_style, key="rotation_queue"
+    )
+    if reordered != queue:
+        db.set_rotation_queue(reordered)
         st.rerun()
 
     st.divider()
@@ -554,8 +561,15 @@ def render_team_settings():
     st.caption("Add, remove, or update the team roster used for rotation, invites, and surveys.")
 
     members = db.list_team_members()
-    for m in members:
-        c1, c2, c3 = st.columns([2, 3, 1])
+    for i, m in enumerate(members):
+        c0, c1, c2, c3 = st.columns([0.8, 2, 3, 1])
+        up, down = c0.columns(2)
+        if up.button("⬆️", key=f"up_{m['name']}", disabled=(i == 0)):
+            db.move_team_member(m["name"], -1)
+            st.rerun()
+        if down.button("⬇️", key=f"down_{m['name']}", disabled=(i == len(members) - 1)):
+            db.move_team_member(m["name"], 1)
+            st.rerun()
         name = c1.text_input("Name", value=m["name"], key=f"name_{m['name']}", disabled=True)
         email = c2.text_input("Email", value=m["email"] or "", key=f"email_{m['name']}")
         if c3.button("Save", key=f"save_{m['name']}"):

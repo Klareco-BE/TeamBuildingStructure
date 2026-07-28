@@ -28,11 +28,11 @@ DATABASE_URL = os.getenv("SUPABASE_DB_URL")
 
 DEFAULT_TEAM = [
     ("Bruno", "bruno.fantoli@klareco.be"),
-    ("Ysaline", "ysaline@klareco.be"),
-    ("Jens", "jens@klareco.be"),
-    ("Basil", "basil@klareco.be"),
-    ("Tam", "tam@klareco.be"),
-    ("Jeroen", "jeroen@klareco.be"),
+    ("Ysaline", "ysaline.thillaye@klareco.be"),
+    ("Jens", "jens.heyvaert@klareco.be"),
+    ("Basil", "basil.himbert@klareco.be"),
+    ("Tam", "tam.nguyenvan@klareco.be"),
+    ("Jeroen", "jeroen.diels@klareco.be"),
 ]
 
 CATEGORIES = ["creativity", "team_spirit", "fun", "execution"]
@@ -126,6 +126,7 @@ def init_db():
                 email TEXT
             )
         """)
+        conn.execute("ALTER TABLE team_members ADD COLUMN IF NOT EXISTS sort_order INTEGER")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS events (
                 id SERIAL PRIMARY KEY,
@@ -167,21 +168,36 @@ def init_db():
         existing = conn.execute("SELECT COUNT(*) AS c FROM team_members").fetchone()["c"]
         if existing == 0:
             conn.executemany(
-                "INSERT INTO team_members (name, email) VALUES (%s, %s)", DEFAULT_TEAM
+                "INSERT INTO team_members (name, email, sort_order) VALUES (%s, %s, %s)",
+                [(name, email, i) for i, (name, email) in enumerate(DEFAULT_TEAM)],
             )
+        else:
+            # Backfill sort_order for rows created before this column existed,
+            # preserving the old alphabetical-by-name ordering.
+            conn.execute("""
+                UPDATE team_members SET sort_order = sub.rn
+                FROM (
+                    SELECT name, ROW_NUMBER() OVER (ORDER BY name) AS rn
+                    FROM team_members WHERE sort_order IS NULL
+                ) AS sub
+                WHERE team_members.name = sub.name
+            """)
 
 
 # ---------------------------------------------------------------- team members
 def list_team_members():
     with get_conn() as conn:
-        rows = conn.execute("SELECT name, email FROM team_members ORDER BY name").fetchall()
+        rows = conn.execute(
+            "SELECT name, email FROM team_members ORDER BY sort_order, name"
+        ).fetchall()
         return [dict(r) for r in rows]
 
 
 def upsert_team_member(name, email):
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO team_members (name, email) VALUES (%s, %s) "
+            "INSERT INTO team_members (name, email, sort_order) "
+            "VALUES (%s, %s, COALESCE((SELECT MAX(sort_order) + 1 FROM team_members), 0)) "
             "ON CONFLICT(name) DO UPDATE SET email=excluded.email",
             (name.strip(), email.strip()),
         )
@@ -190,6 +206,29 @@ def upsert_team_member(name, email):
 def delete_team_member(name):
     with get_conn() as conn:
         conn.execute("DELETE FROM team_members WHERE name = %s", (name,))
+
+
+def move_team_member(name, offset):
+    """Swap `name` with the member `offset` slots away (-1 for up, +1 for down)."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT name, sort_order FROM team_members ORDER BY sort_order, name"
+        ).fetchall()
+        names = [r["name"] for r in rows]
+        if name not in names:
+            return
+        idx = names.index(name)
+        swap_idx = idx + offset
+        if swap_idx < 0 or swap_idx >= len(names):
+            return
+        conn.execute(
+            "UPDATE team_members SET sort_order = %s WHERE name = %s",
+            (rows[swap_idx]["sort_order"], rows[idx]["name"]),
+        )
+        conn.execute(
+            "UPDATE team_members SET sort_order = %s WHERE name = %s",
+            (rows[idx]["sort_order"], rows[swap_idx]["name"]),
+        )
 
 
 # ---------------------------------------------------------------- rotation helpers
@@ -238,20 +277,6 @@ def set_rotation_queue(names):
             "INSERT INTO organizer_queue (position, name) VALUES (%s, %s)",
             list(enumerate(names)),
         )
-
-
-def move_organizer_to_slot(name, slot_index):
-    """Move `name` to `slot_index` in the rotation queue, shifting everyone
-    between their old and new spot over by one — e.g. moving someone from
-    slot 2 up to slot 0 pushes the previous slot-0 and slot-1 people back by
-    one each."""
-    queue = get_rotation_queue()
-    if name not in queue:
-        return
-    queue.remove(name)
-    slot_index = max(0, min(slot_index, len(queue)))
-    queue.insert(slot_index, name)
-    set_rotation_queue(queue)
 
 
 def get_next_organizer():
