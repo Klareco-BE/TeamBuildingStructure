@@ -3,8 +3,8 @@ import os
 import psycopg2
 import psycopg2.extras
 
-OLD_URL = "postgresql://postgres.aiefcgdvsqtgrbuxfszk:8yq4gk10iVMfglOi@aws-0-eu-west-1.pooler.supabase.com:6543/postgres"
-NEW_URL = "postgresql://neondb_owner:npg_U29cfVzOKoie@ep-gentle-lab-b1lkegrx-pooler.c-5.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+OLD_URL = "XXX"
+NEW_URL = "YYY"
 
 TABLES = ["team_members", "organizer_queue", "events", "responses"]
 
