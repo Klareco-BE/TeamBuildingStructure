@@ -6,8 +6,8 @@ replaces the old SQLite file so data survives app restarts and redeploys —
 Supabase's storage is a real persistent database, not tied to this app's
 own container.
 
-Set SUPABASE_DB_URL (in .env locally, or as a Streamlit Cloud Secret) to
-the "Connection string" from your Supabase project's Database settings —
+Set NEON_DB_URL (in .env locally, or as a Streamlit Cloud Secret) to
+the "Connection string" from your Neon project's Database settings —
 use the "Transaction pooler" one (port 6543), which is the one meant for
 apps like this that open short-lived connections. See README.md for the
 full setup walkthrough.
@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("SUPABASE_DB_URL")
+DATABASE_URL = os.getenv("NEON_DB_URL")
 
 DEFAULT_TEAM = [
     ("Bruno", "bruno.fantoli@klareco.be"),
@@ -81,9 +81,9 @@ def _get_pool():
     if _pool is None:
         if not DATABASE_URL:
             raise RuntimeError(
-                "SUPABASE_DB_URL isn't set. Add it to your .env file locally, or as a "
+                "NEON_DB_URL isn't set. Add it to your .env file locally, or as a "
                 "Streamlit Cloud Secret when deployed — see README.md for where to find "
-                "this connection string in your Supabase project."
+                "this connection string in your Neon project."
             )
         _pool = psycopg2.pool.ThreadedConnectionPool(
             1, 5, dsn=DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor,

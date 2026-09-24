@@ -2,7 +2,7 @@
 Klareco Team Building — standalone dashboard.
 
 Run locally:      streamlit run app.py
-Data lives in:     Supabase (Postgres) — set SUPABASE_DB_URL in .env,
+Data lives in:     Neon (Postgres) — set NEON_DB_URL in .env,
                     see README.md's "Setting up storage" section.
 Email:             by default, "send" buttons open the message in your own
                     email app (Outlook, Gmail, etc.) so you just hit Send
@@ -592,7 +592,7 @@ def render_team_settings():
     st.divider()
     st.subheader("Backup")
     st.caption(
-        "Data now lives in Supabase, which keeps its own backups — this is just an extra copy in "
+        "Data now lives in Neon, which keeps its own backups — this is just an extra copy in "
         "your own hands if you ever want one."
     )
     backup_json = json.dumps(db.export_all_data(), indent=2, default=str)
