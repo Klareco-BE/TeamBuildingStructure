@@ -91,31 +91,34 @@ def _get_pool():
     return _pool
 
 
+def _get_live_conn(pool):
+    """Borrow a connection that actually works. Neon closes every open
+    connection when it suspends after a few idle minutes, so the pool can be
+    full of dead ones: test each and throw away any that fail."""
+    for _ in range(6):  # pool holds at most 5, so the 6th try is a fresh one
+        conn = pool.getconn()
+        try:
+            with conn.cursor() as probe:
+                probe.execute("SELECT 1")
+            return conn
+        except (psycopg2.OperationalError, psycopg2.InterfaceError):
+            pool.putconn(conn, close=True)
+    raise RuntimeError("Couldn't get a working database connection.")
+
+
 @contextmanager
 def get_conn():
     pool = _get_pool()
-    conn = pool.getconn()
-
-    # A connection borrowed from the pool might have gone stale while it
-    # sat idle (Supabase can close quiet connections after a while). A tiny
-    # "are you still there?" check is far cheaper than a fresh connection,
-    # so ping it first and swap in a new one only if it's actually dead.
-    try:
-        with conn.cursor() as probe:
-            probe.execute("SELECT 1")
-    except Exception:
-        conn.rollback()
-        pool.putconn(conn, close=True)
-        conn = pool.getconn()
-
+    conn = _get_live_conn(pool)
     try:
         yield _CursorWrapper(conn.cursor())
         conn.commit()
     except Exception:
-        conn.rollback()
+        if not conn.closed:
+            conn.rollback()
         raise
     finally:
-        pool.putconn(conn)
+        pool.putconn(conn, close=bool(conn.closed))
 
 
 def init_db():
